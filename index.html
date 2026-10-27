@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Azeroth Survivors Save Editor</title>
+<style>
+  :root { color-scheme: dark; --bg:#12140f; --panel:#1c1f16; --line:#3a4030; --text:#ebe6d6; --mute:#a39b86; --gold:#e0ac4a; --good:#8dcf8a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.4 "Segoe UI", sans-serif; }
+  header, main { width: min(1100px, calc(100% - 28px)); margin: 0 auto; }
+  header { padding: 22px 0 8px; }
+  h1 { font-size: 28px; font-weight: 600; margin: 0; color: var(--gold); }
+  p { margin: 6px 0; }
+  .muted { color: var(--mute); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button, select, input, textarea { font: inherit; color: inherit; background: #12140f; border: 1px solid var(--line); border-radius: 6px; }
+  button { padding: 7px 12px; cursor: pointer; }
+  button.primary { background: var(--gold); color: #1a1406; border-color: var(--gold); font-weight: 650; }
+  button:hover { border-color: var(--gold); }
+  nav { display: flex; gap: 6px; flex-wrap: wrap; margin: 14px 0; }
+  nav button[aria-pressed="true"] { border-color: var(--gold); color: var(--gold); }
+  section { display: none; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 18px; }
+  section.on { display: block; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  input[type="number"], input[type="text"] { padding: 5px 8px; width: 8.5em; }
+  input.wide, textarea { width: 100%; }
+  #hook { flex: 1 1 280px; width: auto; }
+  #choices button { font-size: 13px; text-align: left; }
+  textarea { min-height: 180px; padding: 8px; font-family: Consolas, monospace; font-size: 13px; }
+  .zones { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 6px 14px; margin: 10px 0; }
+  .gear { width: 100%; overflow: auto; }
+  .gear td, .gear th { font-size: 13px; padding: 4px; }
+  .gear button { width: 100%; text-align: left; padding: 4px 6px; font-size: 12px; }
+  .gear button.on { border-color: var(--good); color: var(--good); }
+  #status { min-height: 1.4em; }
+  .ok { color: var(--good); }
+  .bad { color: #ff8a73; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Azeroth Survivors save editor</h1>
+  <p class="muted">Point this at your save, wherever it sits. Paste a path, browse to <span class="muted">characters.txt</span> or a <span class="muted">.sav</span>, or browse to the game folder and the editor will look inside it. Close the game before you write, or it will overwrite the file when it exits.</p>
+  <div class="row">
+    <input id="hook" class="wide" type="text" placeholder="Path to the save file, or to the game folder" spellcheck="false">
+    <button id="use-hook" type="button">Use this path</button>
+    <button id="browse-file" type="button">Browse save file</button>
+    <button id="browse-dir" type="button">Browse game folder</button>
+  </div>
+  <div class="row" id="choices"></div>
+  <div class="row">
+    <button class="primary" id="load" type="button">Reload</button>
+    <button id="write" type="button">Save to this file</button>
+    <button id="file" type="button">Download .sav</button>
+    <label class="muted">Open a copy <input id="import" type="file" accept=".sav,.txt,text/plain"></label>
+  </div>
+  <p id="status" class="muted">Looking for a save.</p>
+</header>
+<main>
+  <nav>
+    <button type="button" data-tab="talents" aria-pressed="true">Talents</button>
+    <button type="button" data-tab="maps">Maps</button>
+    <button type="button" data-tab="armor">Armor</button>
+    <button type="button" data-tab="account">Account</button>
+    <button type="button" data-tab="raw">All records</button>
+  </nav>
+  <section id="talents" class="on">
+    <p class="muted">Talent XP is the account level for a class. 23,205 XP is all 51 points. Ranks is the spent-talent list the game already stored. Leave it alone unless you know the tokens.</p>
+    <div class="row"><button type="button" id="max-all">Max XP on every class</button></div>
+    <table><thead><tr><th>Class</th><th>XP</th><th>Points</th><th>Ranks</th></tr></thead><tbody id="talent-body"></tbody></table>
+  </section>
+  <section id="maps">
+    <div class="row">
+      <label>Class <select id="map-class"></select></label>
+      <label>Current zone <select id="open-zone"></select></label>
+      <button type="button" id="maps-one">Clear every map for this class</button>
+      <button type="button" id="maps-all">Clear every map for every class</button>
+    </div>
+    <div class="zones" id="zone-list"></div>
+  </section>
+  <section id="armor">
+    <div class="row">
+      <label>Class <select id="gear-class"></select></label>
+      <button type="button" id="gear-one">Unlock this class</button>
+      <button type="button" id="gear-all">Unlock all 498 pieces</button>
+    </div>
+    <p class="muted" id="gear-count"></p>
+    <div class="gear"><table id="gear-table"></table></div>
+    <p>Worn pieces for this class. Format is <span class="muted">slot:itemId,slot:itemId</span>. Unlocking the collection does not equip it.</p>
+    <input class="wide" id="equip" type="text">
+  </section>
+  <section id="account">
+    <h2>Stats</h2>
+    <p class="muted">One key=value per line. kills, gold, guardians, bosses, runs, wins, caches are the ones the game writes.</p>
+    <textarea id="stats"></textarea>
+    <h2>Codex</h2>
+    <p class="muted">One id=quality per line. Quality runs from 0 up. The button sets every listed entry to 4.</p>
+    <div class="row"><button type="button" id="codex-max">Set listed codex to 4</button></div>
+    <textarea id="codex"></textarea>
+    <h2>Achievements</h2>
+    <p class="muted">One achievement id per line, such as zone:elwynn or class:druid. New ids get a timestamp. Existing timestamps stay.</p>
+    <textarea id="achs"></textarea>
+  </section>
+  <section id="raw">
+    <p class="muted">Every line in the save. Add a line to add a record. Apply replaces the whole save in memory. Save to game writes it.</p>
+    <textarea id="raw-text"></textarea>
+    <div class="row"><button type="button" id="raw-apply">Apply records</button></div>
+  </section>
+</main>
+<script src="/model.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let lines = [];
+let savePath = '';
+
+function say(text, bad) {
+  const el = $('status');
+  el.textContent = text;
+  el.className = bad ? 'bad' : 'ok';
+}
+
+function classOptions(sel) {
+  sel.innerHTML = M.CLASSES.map(([id, name]) => '<option value="' + id + '">' + name + '</option>').join('');
+}
+
+function syncTalent(classId, xp, ranks) {
+  if (xp === '' && !ranks) M.removeTalent(lines, classId);
+  else M.setTalent(lines, classId, xp === '' ? 0 : xp, ranks);
+}
+
+function renderTalents() {
+  const have = new Map(M.talents(lines).map(t => [t.classId, t]));
+  $('talent-body').innerHTML = M.CLASSES.map(([id, name]) => {
+    const t = have.get(String(id)) || { xp: '', ranks: '' };
+    const xp = t.xp === undefined ? '' : t.xp;
+    return '<tr data-class="' + id + '"><td>' + name + '</td><td><input type="number" min="0" data-xp value="' + xp + '"></td><td data-points>' + (xp === '' ? 'no record' : M.pointsFromXp(xp) + ' / 51') + '</td><td><input class="wide" data-ranks value="' + String(t.ranks || '').replace(/"/g, '&quot;') + '"></td></tr>';
+  }).join('');
+  for (const row of $('talent-body').querySelectorAll('tr')) {
+    const id = row.dataset.class;
+    const xp = row.querySelector('[data-xp]');
+    const ranks = row.querySelector('[data-ranks]');
+    const points = row.querySelector('[data-points]');
+    const write = () => {
+      syncTalent(id, xp.value.trim(), ranks.value.trim());
+      points.textContent = xp.value.trim() === '' && !ranks.value.trim() ? 'no record' : M.pointsFromXp(xp.value) + ' / 51';
+      refreshRaw();
+    };
+    xp.oninput = write;
+    ranks.oninput = write;
+  }
+}
+
+function selectedMapClass() { return $('map-class').value; }
+
+function renderMaps() {
+  const id = selectedMapClass();
+  const owned = new Set(M.beats(lines, id));
+  $('zone-list').innerHTML = M.ZONES.map(([name, key]) =>
+    '<label><input type="checkbox" data-zone="' + key + '"' + (owned.has(key) ? ' checked' : '') + '> ' + name + '</label>'
+  ).join('');
+  const open = M.openZone(lines, id);
+  $('open-zone').innerHTML = '<option value="">none</option>' + M.ZONES.map(([name, key]) =>
+    '<option value="' + key + '"' + (key === open ? ' selected' : '') + '>' + name + '</option>'
+  ).join('');
+  $('zone-list').querySelectorAll('input').forEach(box => box.onchange = () => {
+    const zones = [...$('zone-list').querySelectorAll('input:checked')].map(el => el.dataset.zone);
+    M.setBeats(lines, selectedMapClass(), zones);
+    refreshRaw();
+  });
+}
+
+function ownedItems() { return new Set(M.listField(lines, 'items')); }
+
+function renderGear() {
+  const id = $('gear-class').value;
+  const have = ownedItems();
+  const slots = M.slotCount(id);
+  let html = '<thead><tr><th>Rarity</th>' + M.SLOTS.slice(0, slots).map(s => '<th>' + s + '</th>').join('') + '</tr></thead><tbody>';
+  for (let r = 0; r < 6; r++) {
+    html += '<tr><th>' + M.RARITIES[r] + '</th>';
+    for (let s = 0; s < slots; s++) {
+      const key = M.itemId(id, s, r);
+      html += '<td><button type="button" data-id="' + key + '" class="' + (have.has(key) ? 'on' : '') + '">' + (have.has(key) ? 'Owned' : 'Missing') + '</button></td>';
+    }
+    html += '</tr>';
+  }
+  $('gear-table').innerHTML = html + '</tbody>';
+  const all = M.allItemIds();
+  $('gear-count').textContent = [...have].filter(x => all.includes(x)).length + ' / 498 collected';
+  $('equip').value = M.equipBody(lines, id);
+  $('gear-table').querySelectorAll('button').forEach(btn => btn.onclick = () => {
+    const set = ownedItems();
+    if (set.has(btn.dataset.id)) set.delete(btn.dataset.id); else set.add(btn.dataset.id);
+    const kept = M.listField(lines, 'items').filter(x => set.has(x));
+    for (const x of set) if (!kept.includes(x)) kept.push(x);
+    M.setListField(lines, 'items', kept);
+    renderGear();
+    refreshRaw();
+  });
+}
+
+function pairText(pairs) { return pairs.map(p => p[0] + '=' + p[1]).join('\n'); }
+function textPairs(text) {
+  return text.split(/\n/).map(l => l.trim()).filter(Boolean).map(l => {
+    const i = l.indexOf('=');
+    return i < 0 ? [l, ''] : [l.slice(0, i).trim(), l.slice(i + 1).trim()];
+  });
+}
+
+function renderAccount() {
+  $('stats').value = pairText(M.statPairs(lines));
+  $('codex').value = pairText(M.seenPairs(lines));
+  $('achs').value = M.listField(lines, 'ach').join('\n');
+}
+
+function refreshRaw() {
+  if (document.activeElement === $('raw-text')) return;
+  $('raw-text').value = M.joinLines(lines);
+}
+
+function render() {
+  renderTalents();
+  renderMaps();
+  renderGear();
+  renderAccount();
+  refreshRaw();
+}
+
+async function readJson(res) {
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || ('Request failed (' + res.status + ')'));
+  return data;
+}
+
+function showChoices(paths) {
+  const box = $('choices');
+  box.innerHTML = '';
+  for (const p of paths || []) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = p;
+    b.onclick = () => usePath(p);
+    box.appendChild(b);
+  }
+}
+
+async function loadPlain(plain, filePath) {
+  lines = M.splitLines(plain);
+  savePath = filePath || '';
+  if (filePath) $('hook').value = filePath;
+  render();
+  say(savePath
+    ? savePath + ' — ' + lines.length + ' records. Close the game before saving.'
+    : 'Opened a copy in memory only. Use a path above before saving, or download a .sav.');
+}
+
+async function usePath(p) {
+  const data = await readJson(await fetch('/api/hook', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: p })
+  }));
+  await applyLoaded(data);
+}
+
+async function applyLoaded(data) {
+  if (data.cancelled) { say('No file selected.'); return; }
+  if (data.choices && data.choices.length) {
+    showChoices(data.choices);
+    say('That folder has more than one save. Pick which file to edit.');
+    return;
+  }
+  showChoices(data.suggestions || []);
+  if (!data.plain) {
+    say('No save hooked yet. Browse to characters.txt, a .sav, or the folder that contains either.', true);
+    return;
+  }
+  await loadPlain(data.plain, data.path);
+}
+
+$('use-hook').onclick = async () => {
+  try { await usePath($('hook').value.trim()); }
+  catch (err) { say(err.message, true); }
+};
+
+async function browse(kind) {
+  say(kind === 'dir' ? 'Choose the game folder in the window that opened.' : 'Choose the save file in the window that opened.');
+  const data = await readJson(await fetch('/api/browse', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind })
+  }));
+  await applyLoaded(data);
+}
+
+$('browse-file').onclick = async () => { try { await browse('file'); } catch (err) { say(err.message, true); } };
+$('browse-dir').onclick = async () => { try { await browse('dir'); } catch (err) { say(err.message, true); } };
+
+$('load').onclick = async () => {
+  try {
+    const data = await readJson(await fetch('/api/save'));
+    await applyLoaded(data);
+  } catch (err) { say(err.message, true); }
+};
+
+$('write').onclick = async () => {
+  try {
+    const data = await readJson(await fetch('/api/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plain: M.joinLines(lines) }) }));
+    say('Wrote ' + data.path + '. A backup of the previous file is next to it. Start the game.');
+  } catch (err) { say(err.message, true); }
+};
+
+$('file').onclick = async () => {
+  try {
+    const data = await readJson(await fetch('/api/download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plain: M.joinLines(lines) }) }));
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([data.text + '\n'], { type: 'text/plain' }));
+    a.download = 'AzerothSurvivors.sav';
+    a.click();
+    say('Downloaded a signed .sav. In game: Options, Saves, Import Save.');
+  } catch (err) { say(err.message, true); }
+};
+
+$('import').onchange = async () => {
+  const file = $('import').files[0];
+  if (!file) return;
+  try {
+    const data = await readJson(await fetch('/api/decode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: await file.text() }) }));
+    lines = M.splitLines(data.plain);
+    savePath = '';
+    render();
+    say('Opened ' + file.name + ' in memory. It is not hooked, so Save still writes the path in the box. Download a .sav if you only want a file to import in game.');
+  } catch (err) { say(err.message, true); }
+};
+
+document.querySelectorAll('nav button').forEach(btn => btn.onclick = () => {
+  document.querySelectorAll('nav button').forEach(b => b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'));
+  document.querySelectorAll('main section').forEach(s => s.classList.toggle('on', s.id === btn.dataset.tab));
+  if (btn.dataset.tab === 'raw') refreshRaw();
+});
+
+$('max-all').onclick = () => {
+  for (const [id] of M.CLASSES) {
+    const cur = M.talents(lines).find(t => t.classId === String(id));
+    M.setTalent(lines, id, M.MAX_TALENT_XP, cur ? cur.ranks : '');
+  }
+  renderTalents();
+  refreshRaw();
+};
+
+classOptions($('map-class'));
+classOptions($('gear-class'));
+$('map-class').onchange = renderMaps;
+$('open-zone').onchange = () => { M.setOpenZone(lines, selectedMapClass(), $('open-zone').value); refreshRaw(); };
+$('maps-one').onclick = () => { M.setBeats(lines, selectedMapClass(), M.ZONES.map(z => z[1])); if (!M.openZone(lines, selectedMapClass())) M.setOpenZone(lines, selectedMapClass(), 'elwynn'); renderMaps(); refreshRaw(); };
+$('maps-all').onclick = () => {
+  for (const [id] of M.CLASSES) {
+    M.setBeats(lines, id, M.ZONES.map(z => z[1]));
+    if (!M.openZone(lines, id)) M.setOpenZone(lines, id, 'elwynn');
+  }
+  renderMaps();
+  refreshRaw();
+};
+
+$('gear-class').onchange = renderGear;
+$('equip').onchange = () => { M.setEquipBody(lines, $('gear-class').value, $('equip').value.trim()); refreshRaw(); };
+function unlockIds(ids) {
+  const have = M.listField(lines, 'items');
+  for (const id of ids) if (!have.includes(id)) have.push(id);
+  M.setListField(lines, 'items', have);
+  renderGear();
+  refreshRaw();
+}
+$('gear-one').onclick = () => {
+  const id = $('gear-class').value;
+  const ids = [];
+  for (let r = 0; r < 6; r++) for (let s = 0; s < M.slotCount(id); s++) ids.push(M.itemId(id, s, r));
+  unlockIds(ids);
+};
+$('gear-all').onclick = () => unlockIds(M.allItemIds());
+
+$('stats').onchange = () => { M.setStatPairs(lines, textPairs($('stats').value)); refreshRaw(); };
+$('codex').onchange = () => { M.setSeenPairs(lines, textPairs($('codex').value)); refreshRaw(); };
+$('codex-max').onclick = () => {
+  const pairs = textPairs($('codex').value).map(([k]) => [k, '4']);
+  $('codex').value = pairText(pairs);
+  M.setSeenPairs(lines, pairs);
+  refreshRaw();
+};
+$('achs').onchange = () => {
+  const ids = $('achs').value.split(/\n/).map(s => s.trim()).filter(Boolean);
+  const oldTimes = new Map();
+  const achat = lines.find(l => l.startsWith('achat|'));
+  if (achat) {
+    for (const part of achat.slice(6).split(',').filter(Boolean)) {
+      const i = part.indexOf('=');
+      if (i >= 0) oldTimes.set(part.slice(0, i), part.slice(i + 1));
+    }
+  }
+  const now = String(Math.floor(Date.now() / 1000));
+  M.setListField(lines, 'ach', ids);
+  M.setListField(lines, 'achat', ids.map(id => id + '=' + (oldTimes.get(id) || now)));
+  refreshRaw();
+};
+
+$('raw-apply').onclick = () => {
+  lines = M.splitLines($('raw-text').value);
+  render();
+  say('Records updated in memory. Save to game when you want them written.');
+};
+
+$('load').click();
+</script>
+</body>
+</html>
